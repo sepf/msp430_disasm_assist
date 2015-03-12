@@ -130,7 +130,8 @@ def generate_labels(entry_point, raw_data, instrs):
                 labels[instr.src.addend] = make_jump_label()
         elif (instr.opcode == decoder.OpcodeId.Mov and 
                 instr.dst.reg == decoder.Register.PC and
-                instr.dst.type_ == decoder.OperandType.Immediate):
+                instr.dst.type_ == decoder.OperandType.Register and
+                instr.src.type_ == decoder.OperandType.Immediate):
             if instr.src.addend not in labels:
                 labels[instr.src.addend] = make_jump_label()
         elif instr.opcode == decoder.OpcodeId.Call:
