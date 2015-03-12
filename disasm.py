@@ -156,7 +156,10 @@ def main():
         label = labels.get(instr.address)
         if label:
             print('{}:'.format(label))
-        print(format_instr(instr, labels))
+        line = format_instr(instr, labels).ljust(60)
+
+        # Add a column of semicolons to make it easier to document inline
+        print(line, '; ')
 
 if __name__ == '__main__':
     main()
