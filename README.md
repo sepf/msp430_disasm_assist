@@ -2,6 +2,11 @@ This is a basic tool for generating a more usable starting point for
 reverse-engineering MSP430 images.  It's pretty hacky at the moment,
 but a lot nicer than the output of objdump, and easier to extend.
 
+# Current Features versus objdump
+- Label generation for interrupt service routines, targets of calls, and targets of jumps
+- Resolves relative addresses into absolute addresses
+- Resolves peripheral register names
+
 # Building
 This is not optimized for being painless :)
 ## libopcodes
