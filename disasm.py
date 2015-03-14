@@ -2,6 +2,7 @@ import binascii
 import collections
 import sys
 
+import control_flow
 import decoder
 import intelhex
 import msp430_labels
@@ -85,61 +86,6 @@ def format_instr(instr, code_labels):
         parts.append("{}, {}".format(format_operand(instr.src, code_labels), format_operand(instr.dst, code_labels)))
     return ''.join(parts)
 
-def generate_labels(entry_point, raw_data, instrs):
-    """ Find all locations jumped to/called to and name them.
-        
-        This names call targets f.N and jump targets l.N (call target naming wins)
-        The entry_point will be main
-        Any interrupt service routine will be named isr.N
-    """
-    call_n = 0
-    jump_n = 0
-
-    def make_call_label():
-        nonlocal call_n
-        tmp = 'f.{}'.format(call_n)
-        call_n += 1
-        return tmp
-
-    def make_jump_label():
-        nonlocal jump_n
-        tmp = 'l.{}'.format(jump_n)
-        jump_n += 1
-        return tmp
-
-    labels = {}
-    ivt_base = 0xffc0
-
-    for i in range(32):
-        iv_addr = ivt_base + 2 * i
-        isr_addr = raw_data[iv_addr] + (raw_data[iv_addr + 1] << 8)
-        # If we know what uses this interrupt, use a better name
-        # TODO: Make this more generic
-        label = msp430_labels.msp430f21x2_iv.get(iv_addr, 'isr.{}'.format(i))
-        if isr_addr != 0xffff:
-            if isr_addr in labels:
-                labels[isr_addr] += ', {}'.format(label)
-            else:
-                labels[isr_addr] = label
-
-    labels[entry_point] = 'main'
-
-    for instr in instrs.values():
-        if instr.opcode == decoder.OpcodeId.Jmp:
-            if instr.src.addend not in labels:
-                labels[instr.src.addend] = make_jump_label()
-        elif (instr.opcode == decoder.OpcodeId.Mov and 
-                instr.dst.reg == decoder.Register.PC and
-                instr.dst.type_ == decoder.OperandType.Register and
-                instr.src.type_ == decoder.OperandType.Immediate):
-            if instr.src.addend not in labels:
-                labels[instr.src.addend] = make_jump_label()
-        elif instr.opcode == decoder.OpcodeId.Call:
-            if labels.get(instr.src.addend, 'l.').startswith('l.'):
-                labels[instr.src.addend] = make_call_label()
-
-    return labels
-
 def main():
     ih = intelhex.IntelHex(sys.argv[1])
     bytecode = bytes(ih.tobinarray())
@@ -151,7 +97,10 @@ def main():
     for instr in decoder.msp430_decoder(ih.minaddr() + offset, bytecode[offset:]):
         instrs[instr.address] = instr
 
-    labels = generate_labels(entry_point, ih, instrs)
+    labels = control_flow.generate_labels(entry_point, ih, instrs)
+    blocks = control_flow.identify_control_flow(entry_point, ih, instrs, labels)
+    addr_to_block = collections.OrderedDict((b.start_address, b) for b in sorted(blocks, key=lambda b: b.start_address))
+    end_addr_to_block = collections.OrderedDict((b.terminal_instr.address, b) for b in sorted(blocks, key=lambda b: b.start_address))
 
     for instr in instrs.values():
         label = labels.get(instr.address)
@@ -160,7 +109,15 @@ def main():
         line = format_instr(instr, labels).ljust(60)
 
         # Add a column of semicolons to make it easier to document inline
-        print(line, '; ')
+        print(line, '; ', end='')
+        block = addr_to_block.get(instr.address)
+        if block:
+            print('block.{} '.format(id(block),), end='')
+
+        block = end_addr_to_block.get(instr.address)
+        if block:
+            print('end_block.{}'.format(id(block),), end='')
+        print()
 
 if __name__ == '__main__':
     main()
