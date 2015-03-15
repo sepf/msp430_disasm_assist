@@ -33,6 +33,43 @@ TWO_OPERAND_INSTR = {
         decoder.OpcodeId.And,
         }
 
+def format_operation_c_like(instr, code_labels):
+    src = format_operand(instr.src, code_labels)
+    dst = format_operand(instr.dst, code_labels)
+    if instr.opcode == decoder.OpcodeId.Mov:
+        return '{} = {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Add:
+        return '{} += {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Addc:
+        return '{} += {} + C'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Sub:
+        return '{} -= {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Subc:
+        return '{} -= {} - C'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Cmp:
+        return '{} - {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Bit:
+        return '{} & {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Bic:
+        return '{} &= ~{}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Bis:
+        return '{} |= {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Xor:
+        return '{} ^= {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.And:
+        return '{} &= {}'.format(dst, src)
+    elif instr.opcode == decoder.OpcodeId.Call:
+        if instr.src.type_ == decoder.OperandType.Immediate and instr.src.addend in code_labels:
+            return '{}()'.format(code_labels[instr.src.addend])
+        return '{}()'.format(src)
+
+    parts = [format_opcode(instr)]
+    if instr.opcode in ONE_OPERAND_INSTR:
+        parts.append(format_operand(instr.src, code_labels))
+    elif instr.opcode in TWO_OPERAND_INSTR:
+        parts.append("{}, {}".format(format_operand(instr.src, code_labels), format_operand(instr.dst, code_labels)))
+    return ' '.join(parts)
+
 def format_operand(operand, code_labels):
     if operand.type_ == decoder.OperandType.Immediate:
         label = code_labels.get(operand.addend)
@@ -102,7 +139,45 @@ def main():
     addr_to_block = collections.OrderedDict((b.start_address, b) for b in sorted(blocks, key=lambda b: b.start_address))
     end_addr_to_block = collections.OrderedDict((b.terminal_instr.address, b) for b in sorted(blocks, key=lambda b: b.start_address))
 
+    flow = []
+    def find_instr_before(addr):
+        instr = instrs.get(addr - 2) or instrs.get(addr - 4) or instrs.get(addr - 6)
+        return instr.address
+
     for instr in instrs.values():
+        if instr.opcode == decoder.OpcodeId.Jmp and instr.src.type_ == decoder.OperandType.Immediate and instr.cond != decoder.Condition.Always:
+            if instr.src.addend < instr.address:
+                # If jumping backwards, this is a loop
+                flow.append(('loop', instr.src.addend, instr.address))
+            elif instr.src.addend > instr.address:
+                # If jumping forward, this is a conditional
+                flow.append(('if', instr.address, find_instr_before(instr.src.addend)))
+
+    to_remove = set()
+    for i, (t, start, end) in enumerate(flow):
+        for j, (t2, start2, end2) in enumerate(flow):
+            # Break symmetry
+            if start > start2:
+                continue
+
+            if start2 < end:
+                if end2 > end:
+                    to_remove.add(j)
+
+    to_remove = list(to_remove)
+    to_remove.sort(reverse=True)
+    for idx in to_remove:
+        t, start, end = flow[idx]
+        del flow[idx]
+
+    start_of_loop = collections.Counter(start for t, start, _ in flow if t == 'loop')
+    end_of_loop = collections.Counter(end for t, _, end in flow if t == 'loop')
+    start_of_conditionals = collections.Counter(start for t, start, _ in flow if t == 'if')
+    end_of_conditionals = collections.Counter(end for t, _, end in flow if t == 'if')
+
+    prev_instr = None
+    for instr in instrs.values():
+        """
         label = labels.get(instr.address)
         if label:
             print('{}:'.format(label))
@@ -110,14 +185,31 @@ def main():
 
         # Add a column of semicolons to make it easier to document inline
         print(line, '; ', end='')
-        block = addr_to_block.get(instr.address)
-        if block:
-            print('block.{} '.format(id(block),), end='')
+        """
 
-        block = end_addr_to_block.get(instr.address)
-        if block:
-            print('end_block.{}'.format(id(block),), end='')
-        print()
+        label = labels.get(instr.address)
+        if label:
+            if label.startswith(('f.', 'isr.')):
+                print()
+            print('{}:'.format(label))
+
+        if instr.address in start_of_loop:
+            for _ in range(start_of_loop[instr.address]):
+                print('do { ')
+
+        if instr.address in start_of_conditionals:
+            print('if ({}, !{}) {{ '.format(format_operation_c_like(prev_instr, labels), instr.cond.name))
+        elif instr.address in end_of_loop:
+            print('}} while ({}, {}) '.format(format_operation_c_like(prev_instr, labels), instr.cond.name))
+        else:
+            print(format_operation_c_like(instr, labels) + ';', '// {:4x}'.format(instr.address))
+
+        if instr.address + instr.n_bytes in end_of_conditionals:
+            for _ in range(end_of_conditionals[instr.address + instr.n_bytes]):
+                print('} ')
+
+
+        prev_instr = instr
 
 if __name__ == '__main__':
     main()

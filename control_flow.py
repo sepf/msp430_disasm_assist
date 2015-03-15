@@ -73,6 +73,7 @@ class Block:
     def __init__(self, start_address):
         self.start_address = start_address
         self.terminal_instr = None
+        self.prev_blocks = []
         self.next_blocks = []
 
     def __repr__(self):
@@ -91,6 +92,7 @@ def identify_control_flow(entry_point, raw_data, instrs, labels):
             b = Block(addr)
             to_explore.append(b)
             addr_to_block[addr] = b
+        b.prev_blocks.append(block)
         block.next_blocks.append(b)
 
     while to_explore:
@@ -111,6 +113,7 @@ def identify_control_flow(entry_point, raw_data, instrs, labels):
                     enqueue_addr(block, instr.src.addend)
                 done = True
             elif block.start_address != instr.address and labels.get(instr.address):
+                # If we find this instruction is a label, the block ended on the previous instr
                 block.terminal_instr = prev_instr
                 blocks.append(block)
                 break
